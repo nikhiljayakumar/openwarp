@@ -4,33 +4,45 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import subprocess
 
 from cli import CLI_VERSION
 from cli.agent import Agent, AgentError, HttpAgent, OllamaAgent
 
 from cli.gpu import report_gpu
+from cli.perf import report_performance
 
 HELP = """  OPENWARP · Help
   ────────────────────────────────────────────────────────────
   /read           Show GPU stats; a connected model explains them.
-  /ollama MODEL   Select an installed Ollama model for chat + reads.
+  /perf [PROMPT]  Run your prompt (or a default); show reply + timings.
+  /ollama MODEL   Select an installed model (default: qwen2.5:0.5b).
+  /models         List models downloaded in Ollama.
+  /pull MODEL     Download a model, then select it for this session.
   Your message    Chat with the model (no GPU stats attached).
   /help           Show commands.
   /exit, /quit    Exit. Ctrl-D / Ctrl-C also exits at the prompt.
 
-  Try: /ollama MODEL → /read  (find names with ollama list)
-  Reads need NVIDIA drivers; model features need Ollama running.
-  No model? /read still works. /gpu is an alias for /read.
+  Try: /ollama → /perf   |   Need a model? /pull qwen2.5:0.5b
+  /read needs NVIDIA drivers; chat and /perf need Ollama.
 """
 
 
+def run_ollama(args: list[str], base_url: str) -> bool:
+    try:
+        return subprocess.run(
+            ['ollama', *args], env={**os.environ, 'OLLAMA_HOST': base_url},
+            check=False,
+        ).returncode == 0
+    except OSError as exc:
+        raise AgentError('Ollama command unavailable. Install Ollama first.') from exc
+
+
 def run_shell(agent: Agent | None, ollama_url: str | None = None) -> None:
-    print(f"openwarp v{CLI_VERSION}")
-    print("GPU readings and optional model chat. Type /help for commands.")
-    if agent is None:
-        print("No agent connected. Use --ollama-model MODEL or --agent-url URL to connect.")
-    if agent is not None:
-        print("/read sends readings to the connected model.")
+    base_url = ollama_url or os.environ.get('OPENWARP_OLLAMA_URL', 'http://localhost:11434')
+    print(f"openwarp v{CLI_VERSION} · /help for commands")
+    print("/read sends readings to the connected model." if agent is not None
+          else "No model selected. /ollama selects Qwen; /models lists installed models.")
     while True:
         try:
             message = input("openwarp > ").strip()
@@ -39,40 +51,42 @@ def run_shell(agent: Agent | None, ollama_url: str | None = None) -> None:
             return
         if not message:
             continue
-        if message in {"/exit", "/quit"}:
-            return
-        if message == "/help":
-            print(HELP)
-            continue
-        if message == "/ollama" or message.startswith("/ollama "):
-            model = message.partition(" ")[2].strip()
-            if not model:
-                print("Usage: /ollama MODEL (choose an installed model from ollama list)")
-            else:
-                try:
-                    agent = OllamaAgent(model, ollama_url or os.environ.get("OPENWARP_OLLAMA_URL", "http://localhost:11434"))
-                except AgentError as exc:
-                    print(f"Error: {exc}", file=sys.stderr)
-                    continue
-                print(f"Ollama model: {model}. /read now includes a model explanation.")
-            continue
-        if message in {"/read", "/read explain", "/gpu", "/gpu explain"}:
-            try:
-                explain = message.endswith(" explain") or agent is not None
-                report_gpu(agent, explain=explain)
-            except AgentError as exc:
-                print(f"Error: {exc}", file=sys.stderr)
-            except KeyboardInterrupt:
-                print("\nRequest cancelled.")
-            continue
-        if message.startswith("/"):
-            print("Unknown command. Use /help.")
-            continue
-        if agent is None:
-            print("No agent connected. Use --ollama-model MODEL or --agent-url URL to send messages.")
-            continue
+        command, _, argument = message.partition(' ')
+        argument = argument.strip()
         try:
-            print(agent.reply(message))
+            if message in {"/exit", "/quit"}:
+                return
+            elif message == "/help":
+                print(HELP)
+            elif message == "/models":
+                if not run_ollama(['list'], base_url):
+                    print("Could not list models. Check that Ollama is running.")
+            elif command in {"/pull", "/ollama"}:
+                model = argument or "qwen2.5:0.5b"
+                if command == "/pull" and (model.startswith('-') or any(c.isspace() for c in model)):
+                    print("Usage: /pull MODEL")
+                    continue
+                candidate = OllamaAgent(model, base_url)
+                if command == "/pull":
+                    print(f"Downloading {model}...", flush=True)
+                    if not run_ollama(['pull', model], base_url):
+                        print("Download failed. Previous model selection kept.")
+                        continue
+                agent = candidate
+                print(f"Model: {model}. Ready for /perf, /read, or chat.")
+            elif command == "/perf":
+                if isinstance(agent, OllamaAgent):
+                    report_performance(agent, argument or None)
+                else:
+                    print("Select an Ollama model first: /ollama MODEL")
+            elif message in {"/read", "/read explain", "/gpu", "/gpu explain"}:
+                report_gpu(agent, explain=message.endswith(" explain") or agent is not None)
+            elif message.startswith("/"):
+                print("Unknown command. Use /help.")
+            elif agent is None:
+                print("Select a model with /ollama, or download one with /pull MODEL.")
+            else:
+                print(agent.reply(message))
         except AgentError as exc:
             print(f"Error: {exc}", file=sys.stderr)
         except KeyboardInterrupt:
@@ -87,9 +101,14 @@ def cli(argv: list[str] | None = None) -> None:
     parser.add_argument("--ollama-model", default=os.environ.get("OPENWARP_OLLAMA_MODEL"), help="installed Ollama model for chat and GPU explanations")
     parser.add_argument("--ollama-url", default=os.environ.get("OPENWARP_OLLAMA_URL", "http://localhost:11434"), help="Ollama base URL")
     parser.add_argument("--read", "--gpu", dest="gpu", action="store_true", help="read a GPU snapshot and exit (NVIDIA)")
+    parser.add_argument("--perf", action="store_true", help="run a short generation and show Ollama timing metrics")
     parser.add_argument("--explain", action="store_true", help="send the GPU snapshot to the connected model; requires --read")
     parser.add_argument("message", nargs="?", help="send one quoted message and exit")
     args = parser.parse_args(argv)
+    if args.perf and (args.gpu or args.explain):
+        parser.error("--perf cannot be combined with --read or --explain")
+    if args.perf and not args.ollama_model:
+        parser.error("--perf requires --ollama-model MODEL")
     if args.agent_url and args.ollama_model:
         parser.error("choose either --agent-url or --ollama-model")
     if args.explain and not args.gpu:
@@ -100,7 +119,9 @@ def cli(argv: list[str] | None = None) -> None:
         agent = HttpAgent(args.agent_url, os.environ.get("OPENWARP_AGENT_TOKEN")) if args.agent_url else None
         if args.ollama_model:
             agent = OllamaAgent(args.ollama_model, args.ollama_url)
-        if args.gpu:
+        if args.perf:
+            report_performance(agent, args.message)
+        elif args.gpu:
             explain = args.explain or agent is not None
             report_gpu(agent, explain)
         elif args.message is not None:

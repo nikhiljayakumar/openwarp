@@ -70,3 +70,16 @@ class GpuTests(unittest.TestCase):
             self.assertIn(expected, text)
         self.assertNotIn('[N/A] W', text)
         self.assertNotIn('"gpus"', text)
+
+    def test_ollama_request_contains_visible_gpu_card(self):
+        data = {'captured_at': '2026-10-30T20:40:18+00:00', 'source': 'nvidia-smi', 'gpus': [
+            dict(index='0', name='NVIDIA GeForce RTX 4070 Laptop GPU', utilization_percent='0',
+                 memory_used_mib='605', memory_total_mib='8188', temperature_c='46', power_w='5.01'),
+        ]}
+        with patch('cli.gpu.snapshot', return_value=data), patch('cli.agent.urlopen', return_value=io.BytesIO(b'{"response":"Low current utilization."}')) as send, redirect_stdout(io.StringIO()) as out:
+            report_gpu(OllamaAgent('qwen2.5:0.5b'), True)
+        prompt = json.loads(send.call_args.args[0].data)['prompt']
+        for value in ('NVIDIA GeForce RTX 4070 Laptop GPU', '0%', '605 MiB / 8188 MiB', '46 °C', '5.01 W'):
+            self.assertIn(value, prompt)
+            self.assertIn(value, out.getvalue())
+        self.assertLess(prompt.index('605 MiB'), prompt.index('Explain these readings'))

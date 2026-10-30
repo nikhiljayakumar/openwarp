@@ -15,7 +15,7 @@ class ShellTests(unittest.TestCase):
         with patch('builtins.input', side_effect=['', '/help', '/exit']), redirect_stdout(out):
             run_shell(None)
         self.assertIn('openwarp v', out.getvalue())
-        self.assertIn('No agent connected', out.getvalue())
+        self.assertIn('No model selected', out.getvalue())
 
     def test_shell_sends_message_and_recovers_after_error(self):
         class FakeAgent:
@@ -106,3 +106,41 @@ class ReadTests(unittest.TestCase):
             run_shell(None)
         read.assert_not_called()
         self.assertIn('Unknown command', out.getvalue())
+
+    def test_default_model_selected_inside_shell(self):
+        with patch('builtins.input', side_effect=['/ollama', '/read', '/exit']), patch('cli.main.OllamaAgent') as model, patch('cli.main.report_gpu') as read, redirect_stdout(io.StringIO()):
+            run_shell(None, 'http://localhost:11434')
+        model.assert_called_once_with('qwen2.5:0.5b', 'http://localhost:11434')
+        read.assert_called_once_with(model.return_value, explain=True)
+
+    def test_download_selects_model_only_on_success(self):
+        for code in (0, 1):
+            with self.subTest(code=code), patch('builtins.input', side_effect=['/pull small-model', '/read', '/exit']), patch('cli.main.OllamaAgent') as model, patch('cli.main.subprocess.run') as run, patch('cli.main.report_gpu') as read, redirect_stdout(io.StringIO()):
+                run.return_value.returncode = code
+                run_shell(None, 'http://localhost:11434')
+                self.assertEqual(run.call_args.args[0], ['ollama', 'pull', 'small-model'])
+                read.assert_called_once_with(model.return_value if code == 0 else None, explain=code == 0)
+
+    def test_custom_performance_prompt_inside_shell(self):
+        from cli.agent import OllamaAgent
+        agent = OllamaAgent('small')
+        with patch('builtins.input', side_effect=['/perf Explain gravity in one sentence.', '/exit']), patch('cli.main.report_performance') as perf, redirect_stdout(io.StringIO()):
+            run_shell(agent)
+        perf.assert_called_once_with(agent, 'Explain gravity in one sentence.')
+
+    def test_custom_performance_prompt_from_terminal(self):
+        with patch.dict('os.environ', {}, clear=True), patch('cli.main.OllamaAgent') as model, patch('cli.main.report_performance') as perf:
+            cli(['--ollama-model', 'small', '--perf', 'Explain gravity.'])
+        perf.assert_called_once_with(model.return_value, 'Explain gravity.')
+
+    def test_missing_ollama_command_keeps_shell_open(self):
+        with patch('builtins.input', side_effect=['/models', '/help', '/exit']), patch('cli.main.subprocess.run', side_effect=FileNotFoundError), redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+            run_shell(None)
+        self.assertIn('Install Ollama', err.getvalue())
+        self.assertIn('OPENWARP · Help', out.getvalue())
+
+    def test_cancelled_request_keeps_shell_open(self):
+        with patch('builtins.input', side_effect=['/read', '/help', '/exit']), patch('cli.main.report_gpu', side_effect=KeyboardInterrupt), redirect_stdout(io.StringIO()) as out:
+            run_shell(None)
+        self.assertIn('Request cancelled', out.getvalue())
+        self.assertIn('OPENWARP · Help', out.getvalue())

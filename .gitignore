@@ -1,34 +1,14 @@
-# Minimal Python
-# Virtual environments
 .venv/
-
-# Python bytecode / caches
 __pycache__/
 *.py[cod]
-
-# Packaging / build artifacts
 build/
 dist/
 *.egg-info/
-
-# Tool caches
 .pytest_cache/
 .mypy_cache/
-
-# Coverage artifacts
 .coverage
 .coverage.*
 htmlcov/
-
-# Local agent / editor state (never commit)
 .claude/
-
-# Env files / secrets
 .env
 .env.*
-
-# Validation-harness output (tools/validate_r0*.py) — regenerated, never committed
-*_validation_results.json
-# Field-validation capture artifacts (replay dirs, nsys reports, tarballs).
-# Large and re-derivable from the cluster; the RESULTS live in docs/validation/.
-captures/

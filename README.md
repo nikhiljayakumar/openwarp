@@ -1,95 +1,163 @@
-# OpenWarp CLI
+# OpenWarp
 
-A standalone terminal shell with an optional agent API connection. Python 3.11+;
-no runtime dependencies.
+A terminal CLI for local model chat, Ollama inference measurements, and NVIDIA
+GPU readings. Python 3.11+; no third-party Python runtime dependencies.
 
-```sh
-python3 -m cli --help
-python3 -m cli                 # interactive shell
+## Environment
+
+The setup below targets **Ubuntu Linux or Ubuntu in WSL2**, using Bash.
+Install and run Ollama in the same environment as OpenWarp. The default server
+is `http://localhost:11434`.
+
+- **Chat and `/perf`:** running Ollama server and a downloaded model. CPU or GPU inference works.
+- **`/read`:** NVIDIA GPU, working driver, and `nvidia-smi` accessible inside Ubuntu/WSL.
+- **Installation:** internet access and sudo. Local inference works offline after downloading a model.
+
+For GPU compatibility, see [Ollama hardware support](https://docs.ollama.com/gpu).
+Check `nvidia-smi` for sensor access and `ollama ps` during inference for CPU/GPU
+placement. GPU detection during installation alone does not confirm GPU inference.
+
+## Setup
+
+### 1. Prerequisites and clone
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git python3 curl zstd
+python3 --version   # must be 3.11+
+git clone REPOSITORY_URL openwarp
+cd openwarp
 ```
 
-Or install with `python3 -m pip install -e .` and run `openwarp`.
-Inside the shell, use `/read` for a GPU snapshot, `/help`, `/exit`, or `/quit`. Ctrl-D or Ctrl-C exits.
+Replace `REPOSITORY_URL` with this repository's clone URL. Already cloned? Start
+from its root directory. `zstd` is required by the Ollama installer.
 
-## Optional agent connection
+### 2. Add the `openwarp` command
 
-```sh
-openwarp --agent-url http://localhost:8000/chat
-openwarp --agent-url http://localhost:8000/chat "Hello"
+```bash
+chmod +x bin/openwarp
+mkdir -p "$HOME/.local/bin"
+ln -s "$PWD/bin/openwarp" "$HOME/.local/bin/openwarp"
+export PATH="$HOME/.local/bin:$PATH"
+openwarp --version
 ```
 
-You can also set `OPENWARP_AGENT_URL` and an optional `OPENWARP_AGENT_TOKEN`
-(bearer token). Each message sends an HTTP POST with JSON `{"message": "Hello"}`;
-the endpoint must return JSON `{"reply": "Hi"}`. Requests time out after 30 seconds.
-This is a small generic adapter contract, not a provider-specific API or a bundled
-agent. Conversation state is the endpoint's responsibility. The CLI does not
-persist messages or credentials. Without an endpoint, the shell runs locally
-and explains how to connect when you enter a message.
+Add the `export PATH=...` line to `~/.bashrc` if absent. If the link already
+exists, check it with `ls -l ~/.local/bin/openwarp`. Keep the checkout in place;
+the launcher uses its files. Alternatively, run `python3 -m cli` from the checkout.
+No pip or virtual environment is required.
 
-The `Agent` protocol in `cli/agent.py` is the extension point for another API.
+### 3. Install Ollama and a starter model
 
-Run checks with `python3 -m unittest discover -s tests -v`.
+Use the [official Linux installer](https://docs.ollama.com/linux):
 
-## GPU snapshots explained by Ollama
-
-OpenWarp reads sensors using NVIDIA's `nvidia-smi`; Ollama receives those readings
-as text and explains them. No rules engine, inference engine, GPU tuning, or
-additional Python packages are bundled.
-
-Start your installed Ollama server (`ollama serve` if it is not already running),
-then use a model shown by `ollama list`. Replace `YOUR_MODEL` below with its name;
-install a model using `ollama pull MODEL` if needed.
-
-```sh
-# Read metrics without any model:
-python3 -m cli --read
-
-# Read metrics and ask your installed Ollama model to explain them:
-python3 -m cli --read --explain --ollama-model YOUR_MODEL
-
-# Interactive chat, with /read and /read explain available:
-python3 -m cli --ollama-model YOUR_MODEL
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama --version
+curl -fsS http://localhost:11434/api/tags
 ```
 
-The default Ollama URL is `http://localhost:11434`; override with `--ollama-url`.
-The native `/api/generate` API is used with streaming disabled and a 120-second
-request timeout. Ordinary chat does not automatically attach GPU readings.
+If the API is unreachable, run `sudo systemctl start ollama`. Without systemd,
+run `ollama serve` in another terminal and leave it open. Only one server is needed.
 
-Snapshots include all GPUs visible to `nvidia-smi`, with utilization (%), used
-and total VRAM (MiB), temperature (C), and power (W). Unavailable sensor values
-remain explicit. Currently this requires an NVIDIA GPU and a working driver;
-AMD and Apple GPU metrics are not supported.
+Download [Qwen 2.5 0.5B](https://ollama.com/library/qwen2.5:0.5b) (~398 MB,
+plus working RAM/VRAM) and verify it generates a reply:
 
-Metrics describe the machine running OpenWarp, even if Ollama is remote. When a model is connected, `/read` and `--read` send readings to it automatically.
-Readings are taken before the explanation request, so they do not measure
-that request's inference performance. It includes other GPU workloads and cannot
-establish a bottleneck or tokens/sec from one reading. Model explanations are
-labelled separately from the actual measurements.
+```bash
+ollama pull qwen2.5:0.5b
+ollama run qwen2.5:0.5b "Say hello."
+```
 
-API references: [Ollama generate](https://docs.ollama.com/api/generate) and
-[NVIDIA SMI](https://docs.nvidia.com/deploy/nvidia-smi/).
+### 4. Launch
 
-`--gpu` and `/gpu` remain aliases for `--read` and `/read`. GPU reads work
-without an agent connection; explanations are optional.
+```bash
+openwarp
+```
 
-## Readings with Ollama
-
-With Ollama running, start `python3 -m cli` and type:
+Inside OpenWarp:
 
 ```text
-/ollama YOUR_MODEL
+/ollama
+/perf Explain how a GPU works in three sentences.
 /read
 ```
 
-Choose an installed model from `ollama list`. `/read` includes a model explanation
-when connected. No model is
-automatically downloaded. Without a connection, reads show measurements only.
+## Commands
 
-Readings print as GPU cards with labelled utilization, VRAM, temperature, and
-power values, followed by the optional model explanation. Unavailable sensors
-show `N/A`. Each read takes a single snapshot.
+| Input | Action |
+| --- | --- |
+| `/ollama [MODEL]` | Select a model for this session; defaults to `qwen2.5:0.5b`. Does not download it. |
+| `/models` | List installed models. |
+| `/pull [MODEL]` | Download and select a model; same default as `/ollama`. |
+| `/perf [PROMPT]` | Generate a reply and display its inference measurements; uses a built-in prompt if omitted. |
+| `/read` | Capture GPU readings; a connected model also explains them. |
+| Ordinary text | Chat without collecting GPU readings or displaying performance. |
+| `/help` | Show commands. |
+| `/exit`, `/quit` | Exit. Ctrl-D or Ctrl-C also exits at the prompt. |
 
-Set `OPENWARP_OLLAMA_MODEL` and optionally `OPENWARP_OLLAMA_URL` to avoid repeating
-connection flags. Analysis uses the observations supplied; it cannot expose
-counters the GPU driver does not report or prove an application bottleneck.
-It performs no configuration changes.
+`/gpu` aliases `/read`; `/read explain` explicitly requires a model explanation.
+
+## What gets measured?
+
+**`/perf` runs your prompt through Ollama.** After generation finishes, it prints
+the reply, load/total time, prompt/output token counts, processing times, and
+tokens/second from the [Ollama API](https://docs.ollama.com/api/generate).
+Rates use tokens divided by the corresponding duration. These are measurements
+of that request, not model-generated estimates or previous chat statistics.
+
+Generation is capped at **128 output tokens**, so answers may be cut short.
+`/perf` alone asks how a computer processes a user request. No further input is
+needed while it runs; output appears on completion, with a 120-second response
+timeout. Cold starts can take longer. Missing metrics show `N/A`.
+
+**`/read` takes one NVIDIA snapshot when invoked.** It reads utilization, VRAM,
+temperature, and power through `nvidia-smi`, then optionally asks the model to
+explain them. It captures the local machine before that explanation runs, may
+include other workloads, and does not measure the explanation's inference.
+There is no background polling. Unavailable sensors show `N/A`; explanations
+can be wrong and are labelled separately from measurements.
+
+## Configuration and scripting
+
+Select a model at launch with `--ollama-model MODEL` or `OPENWARP_OLLAMA_MODEL`.
+Set the server with `--ollama-url URL` or `OPENWARP_OLLAMA_URL`; this also applies
+to `/models` and `/pull`. With a remote server, `/perf` measures remote inference
+while `/read` still measures the local GPU. Requests are independent; OpenWarp
+does not retain chat history.
+
+```bash
+openwarp --read
+openwarp --ollama-model qwen2.5:0.5b --perf "Explain how a GPU works."
+openwarp --ollama-model qwen2.5:0.5b "Hello"
+```
+
+A custom agent can use `--agent-url URL` or `OPENWARP_AGENT_URL`, with optional
+`OPENWARP_AGENT_TOKEN` bearer authentication. Its endpoint must accept POST JSON
+`{"message":"Hello"}` and return `{"reply":"Hi"}` (30-second timeout).
+`/perf` requires Ollama. Packaged installation is available with
+`python3 -m pip install -e .` in an environment with pip.
+
+## Troubleshooting
+
+- **Command not found:** check the PATH/launcher setup for `openwarp`; install Ollama for `ollama`.
+- **Installer needs zstd:** `sudo apt-get install zstd`, then rerun the installer.
+- **Connection refused:** check `/api/tags` using the setup command; start Ollama if needed.
+- **Missing model:** `/models` to inspect, `/pull MODEL` to download.
+- **GPU read fails:** run `nvidia-smi` in the same Ubuntu/WSL terminal and resolve driver access. AMD/Apple sensor readings are not implemented.
+- **Inference stalls:** check the commands below in another terminal. If direct inference also stalls, investigate Ollama before OpenWarp.
+
+```bash
+ollama ps
+journalctl -u ollama -n 50 --no-pager
+ollama run qwen2.5:0.5b "Say hello."
+```
+
+Without systemd, inspect the terminal running `ollama serve` instead of the journal.
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+GPU/API responses are mocked; these tests do not verify live hardware or Ollama.

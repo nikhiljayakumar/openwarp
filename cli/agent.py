@@ -1,8 +1,4 @@
-"""Optional agent connection, independent of the terminal interface.
-
-An endpoint accepts {"message": "..."} and returns {"reply": "..."}.
-Provider-specific adapters can implement Agent without changing the CLI.
-"""
+"""Generic HTTP and Ollama adapters."""
 from __future__ import annotations
 
 import json
@@ -54,17 +50,33 @@ class OllamaAgent:
         self.endpoint = base_url.rstrip('/') + '/api/generate'
         self.model = model
 
-    def reply(self, message: str) -> str:
-        request = Request(self.endpoint, data=json.dumps({
-            'model': self.model, 'prompt': message, 'stream': False,
-        }).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+    def generate(self, message: str, options: dict | None = None) -> dict:
+        body = {'model': self.model, 'prompt': message, 'stream': False}
+        if options is not None:
+            body['options'] = options
+        request = Request(self.endpoint, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'}, method='POST')
         try:
             with urlopen(request, timeout=120) as response:
                 payload = json.load(response)
         except HTTPError as exc:
-            raise AgentError(f'Ollama returned HTTP {exc.code}. Check that the model is installed with ollama list.') from exc
-        except (URLError, OSError, ValueError) as exc:
-            raise AgentError('Could not read an Ollama response. Check that ollama serve is running and the URL is correct.') from exc
+            if exc.code == 404:
+                raise AgentError('Ollama HTTP 404: check the model name and server URL.') from exc
+            raise AgentError(f'Ollama returned HTTP {exc.code}. Inspect journalctl -u ollama -n 50 --no-pager for server errors.') from exc
+        except TimeoutError as exc:
+            raise AgentError('Ollama hit the 120-second response timeout. Check ollama ps and service logs.') from exc
+        except URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                raise AgentError('Ollama timed out. Check ollama ps and the Ollama service logs.') from exc
+            raise AgentError(f'Cannot connect to {self.endpoint}. Check the URL and Ollama service.') from exc
+        except ValueError as exc:
+            raise AgentError('Ollama returned invalid JSON.') from exc
+        except OSError as exc:
+            raise AgentError('Ollama connection interrupted. Check service logs.') from exc
         if not isinstance(payload, dict) or not isinstance(payload.get('response'), str):
             raise AgentError('Ollama response must contain a string field named "response".')
-        return payload['response']
+        if payload.get('done') is False:
+            raise AgentError('Ollama returned an incomplete generation.')
+        return payload
+
+    def reply(self, message: str) -> str:
+        return self.generate(message)['response']
