@@ -10,12 +10,23 @@ from cli.agent import Agent, AgentError, HttpAgent, OllamaAgent
 
 from cli.gpu import report_gpu
 
-HELP = "Type a message to send to the agent. Commands: /help, /ollama MODEL, /read, /exit (or /quit)."
+HELP = """  OPENWARP · Help
+  ────────────────────────────────────────────────────────────
+  /read           Show GPU stats; a connected model explains them.
+  /ollama MODEL   Select an installed Ollama model for chat + reads.
+  Your message    Chat with the model (no GPU stats attached).
+  /help           Show commands.
+  /exit, /quit    Exit. Ctrl-D / Ctrl-C also exits at the prompt.
+
+  Try: /ollama MODEL → /read  (find names with ollama list)
+  Reads need NVIDIA drivers; model features need Ollama running.
+  No model? /read still works. /gpu is an alias for /read.
+"""
 
 
 def run_shell(agent: Agent | None, ollama_url: str | None = None) -> None:
     print(f"openwarp v{CLI_VERSION}")
-    print(HELP)
+    print("GPU readings and optional model chat. Type /help for commands.")
     if agent is None:
         print("No agent connected. Use --ollama-model MODEL or --agent-url URL to connect.")
     if agent is not None:
