@@ -65,3 +65,44 @@ class AgentTests(unittest.TestCase):
     def test_invalid_url(self):
         with self.assertRaises(AgentError):
             HttpAgent('file:///tmp/agent')
+
+
+class ReadTests(unittest.TestCase):
+    def test_read_in_shell_without_agent(self):
+        with patch('builtins.input', side_effect=['/read', '/exit']), patch('cli.main.report_gpu') as read, redirect_stdout(io.StringIO()):
+            run_shell(None)
+        read.assert_called_once_with(None, explain=False)
+
+    def test_read_flag_without_agent(self):
+        with patch.dict('os.environ', {}, clear=True), patch('cli.main.report_gpu') as read:
+            cli(['--read'])
+        read.assert_called_once_with(None, False)
+
+    def test_read_explain_in_shell(self):
+        agent = object()
+        with patch('builtins.input', side_effect=['/read explain', '/exit']), patch('cli.main.report_gpu') as read, redirect_stdout(io.StringIO()):
+            run_shell(agent)
+        read.assert_called_once_with(agent, explain=True)
+
+    def test_connected_read_explains(self):
+        agent = object()
+        with patch('builtins.input', side_effect=['/read', '/exit']), patch('cli.main.report_gpu') as read, redirect_stdout(io.StringIO()):
+            run_shell(agent)
+        self.assertEqual(read.call_args_list[0].kwargs, {'explain': True})
+
+    def test_select_ollama_interactively(self):
+        with patch('builtins.input', side_effect=['/ollama local-model', '/read', '/exit']), patch('cli.main.OllamaAgent') as model, patch('cli.main.report_gpu') as read, redirect_stdout(io.StringIO()):
+            run_shell(None, 'http://localhost:11434')
+        model.assert_called_once_with('local-model', 'http://localhost:11434')
+        read.assert_called_once_with(model.return_value, explain=True)
+
+    def test_ollama_environment_default(self):
+        with patch.dict('os.environ', {'OPENWARP_OLLAMA_MODEL': 'local-model'}, clear=True), patch('cli.main.OllamaAgent') as model, patch('cli.main.report_gpu') as read:
+            cli(['--read'])
+        read.assert_called_once_with(model.return_value, True)
+
+    def test_deep_command_removed(self):
+        with patch('builtins.input', side_effect=['/read deep', '/exit']), patch('cli.main.report_gpu') as read, redirect_stdout(io.StringIO()) as out:
+            run_shell(None)
+        read.assert_not_called()
+        self.assertIn('Unknown command', out.getvalue())
