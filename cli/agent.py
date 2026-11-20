@@ -49,6 +49,7 @@ class OllamaAgent:
             raise AgentError('Ollama URL must be an absolute HTTP or HTTPS URL.')
         self.endpoint = base_url.rstrip('/') + '/api/generate'
         self.model = model
+        self.last_tokens: int | None = None  # prompt + output tokens of the last generation, for /advise
 
     def generate(self, message: str, options: dict | None = None) -> dict:
         body = {'model': self.model, 'prompt': message, 'stream': False}
@@ -76,6 +77,9 @@ class OllamaAgent:
             raise AgentError('Ollama response must contain a string field named "response".')
         if payload.get('done') is False:
             raise AgentError('Ollama returned an incomplete generation.')
+        counts = (payload.get('prompt_eval_count'), payload.get('eval_count'))
+        if all(type(c) is int for c in counts):
+            self.last_tokens = sum(counts)
         return payload
 
     def reply(self, message: str) -> str:

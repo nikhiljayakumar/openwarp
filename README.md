@@ -90,7 +90,7 @@ Inside OpenWarp:
 | `/pull [MODEL]` | Download and select a model; same default as `/ollama`. |
 | `/perf [PROMPT]` | Generate a reply and show its timings; uses a built-in prompt if omitted. |
 | `/read` | Capture GPU readings; a connected model also explains them. |
-| `/advise` | Check loaded models for partial CPU offload and suggest a fix. |
+| `/advise` | Check loaded models for partial CPU offload and KV cache fragmentation; suggest fixes. |
 | Ordinary text | Chat with the model. |
 | `/help` | Show commands. |
 | `/exit`, `/quit` | Exit. Ctrl-D or Ctrl-C also exits at the prompt. |
@@ -137,12 +137,21 @@ whole machine, including other workloads, and is taken before the explanation
 runs. Unavailable sensors show `N/A`. Explanations can be wrong and are labelled
 separately from the readings.
 
-**`/advise` applies a fixed rule, not a model.** It reads `/api/ps` and one
-`nvidia-smi` snapshot (if available), flags any loaded model with weights on the
-CPU, and prints evidence, a likely cause, fixes, and a source. Confidence is
-high for a measured cause, medium for an inferred one, low for the fallback. It
-never changes settings. Ollama unloads idle models after a few minutes, so run
-it soon after `/perf` or chat.
+**`/advise` applies fixed rules, not a model.** It reads `/api/ps`, `/api/show`
+for each loaded model, and one `nvidia-smi` snapshot (if available). Each rule
+that fires prints evidence, a likely cause, fixes, and a source:
+
+- **CPU offload** flags any loaded model with weights on the CPU.
+- **KV cache fragmentation** sizes the KV cache Ollama reserved for the context
+  window (assuming the default f16 cache type) and compares it with the tokens
+  of this session's last `/perf` or chat request. Over 1 GiB reserved and under
+  half used suggests PagedAttention (vLLM), which allocates the cache as tokens
+  arrive, or a smaller `num_ctx`. Sliding-window and MLA models are skipped.
+  `openwarp --advise` has no session request, so this finding is low confidence.
+
+Confidence is high for a measured cause, medium for an inferred one, low for the
+fallback. It never changes settings or installs anything. Ollama unloads idle
+models after a few minutes, so run it soon after `/perf` or chat.
 
 ## Configuration and scripting
 

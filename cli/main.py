@@ -14,12 +14,13 @@ from cli.gpu import report_gpu
 from cli.perf import PerformanceBaseline, report_performance
 from cli.profiling import DEFAULT_PROFILE_OUTPUT, investigate_slowdown
 from cli.advisor import report_advice
+from cli.advisor.snapshot import MeasuredRequest
 
 HELP = """  OPENWARP · Help
   ────────────────────────────────────────────────────────────
   /read           Show GPU stats; a connected model explains them.
   /perf [PROMPT]  Run your prompt (or a default); show reply + timings.
-  /advise         Check loaded models for CPU offload (run /perf or chat first).
+  /advise         Check CPU offload and KV cache fragmentation (run /perf first).
   /ollama MODEL   Select an installed model (default: qwen2.5:0.5b).
   /models         List models downloaded in Ollama.
   /pull MODEL     Download a model, then select it for this session.
@@ -40,6 +41,13 @@ def run_ollama(args: list[str], base_url: str) -> bool:
         ).returncode == 0
     except OSError as exc:
         raise AgentError('Ollama command unavailable. Install Ollama first.') from exc
+
+
+def last_request(agent: Agent | None) -> tuple[MeasuredRequest, ...]:
+    """The session's last Ollama generation, so /advise can compare used and reserved KV cache."""
+    if isinstance(agent, OllamaAgent) and agent.last_tokens is not None:
+        return (MeasuredRequest(agent.model, agent.last_tokens),)
+    return ()
 
 
 def run_shell(agent: Agent | None, ollama_url: str | None = None,
@@ -87,7 +95,7 @@ def run_shell(agent: Agent | None, ollama_url: str | None = None,
                 else:
                     print("Select an Ollama model first: /ollama MODEL")
             elif message == "/advise":
-                report_advice(base_url)
+                report_advice(base_url, requests=last_request(agent))
             elif message in {"/read", "/read explain", "/gpu", "/gpu explain"}:
                 report_gpu(agent, explain=message.endswith(" explain") or agent is not None)
             elif message.startswith("/"):
@@ -113,7 +121,7 @@ def cli(argv: list[str] | None = None) -> None:
     parser.add_argument("--perf", action="store_true", help="run a short generation and show Ollama timing metrics")
     parser.add_argument("--profile-on-slowdown", type=Path, metavar="DIR",
                         help="set the output directory for automatic Nsight captures (default: ./profiles)")
-    parser.add_argument("--advise", action="store_true", help="check loaded Ollama models for CPU offload and exit")
+    parser.add_argument("--advise", action="store_true", help="check loaded Ollama models for CPU offload and KV cache fragmentation, then exit")
     parser.add_argument("--json", action="store_true", help="with --advise, print the report as JSON")
     parser.add_argument("--explain", action="store_true", help="send the GPU snapshot to the connected model; requires --read")
     parser.add_argument("message", nargs="?", help="send one quoted message and exit")

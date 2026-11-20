@@ -79,7 +79,8 @@ def _finding(f: Finding, width: int, color: bool) -> list[str]:
 
 def render_text(report: Report, width: int | None = None, color: bool | None = None) -> str:
     if not report.findings:
-        return '\n'.join(message for _, message in report.skipped + report.passed)
+        # Rules share the no-models reason; print it once.
+        return '\n'.join(dict.fromkeys(message for _, message in report.skipped + report.passed))
     if width is None:
         width = max(MIN_WIDTH, min(shutil.get_terminal_size().columns, MAX_WIDTH))
     if color is None:

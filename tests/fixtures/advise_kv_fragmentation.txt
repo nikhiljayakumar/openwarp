@@ -1,0 +1,28 @@
+OpenWarp advice · 1 finding
+
+KV cache fragmentation · qwen2.5:14b                            confidence: high
+  Most of the reserved KV cache holds no tokens, wasting VRAM.
+
+  Evidence
+    Context       32,768 tokens
+    Per token     192 KiB         f16 K and V, 48 layers × 8 KV heads
+    KV reserved   6,144 MiB       above the 1,024 MiB threshold
+    Last request  158 tokens      0.5% of the context
+  Likely cause    Context window far larger than the last request
+
+  Fix (pick one)
+    1. PagedAttention (vLLM)   pip install vllm
+                               vllm serve HF_MODEL
+                               (in a venv; HF_MODEL is the Hugging Face repo of
+                               qwen2.5:14b)
+    2. Smaller context         /set parameter num_ctx 2048   (inside ollama run)
+
+  Why
+    Ollama reserves the KV cache for the full context window when the model
+    loads, so VRAM held for tokens a request never reaches is wasted.
+    PagedAttention allocates the cache in small blocks as tokens arrive, so only
+    the last block of a request is partly empty.
+
+  Source  Kwon et al., "Efficient Memory Management for Large Language Model Serving with PagedAttention," SOSP 2023, arXiv:2309.06180
+
+Advice only. OpenWarp did not change any settings.
