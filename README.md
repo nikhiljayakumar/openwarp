@@ -105,6 +105,15 @@ time, token counts, durations, and tokens/second as reported by the
 **128 tokens**, so answers may be cut short. The request times out after 120
 seconds; cold starts can take longer. Missing metrics show `N/A`.
 
+In an interactive session, `/perf` also checks for sustained slowdowns. It
+compares each phase's tokens per second with the median of up to 12 earlier
+samples, starting after five comparable measurements. Samples are grouped by
+Ollama server, model, and token-count ranges. Runs with missing load timings or
+load times of one second or more are skipped. A phase gets an alert after three
+consecutive comparable samples at least 25% below baseline. Those slow samples
+stay out of the baseline. The alert measures throughput; identifying a GPU
+bottleneck requires additional profiling.
+
 **`/read` takes one `nvidia-smi` snapshot** of utilization, VRAM, temperature,
 and power, then optionally asks the model to explain it. The snapshot covers the
 whole machine, including other workloads, and is taken before the explanation

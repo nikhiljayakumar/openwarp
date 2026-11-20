@@ -116,9 +116,12 @@ class ShellCommandTests(unittest.TestCase):
 
     def test_perf_prompt_inside_shell(self):
         agent = OllamaAgent('small')
-        with patch('builtins.input', side_effect=['/perf Explain gravity in one sentence.', '/exit']), patch('cli.main.report_performance') as perf, redirect_stdout(io.StringIO()):
+        with patch('builtins.input', side_effect=['/perf Explain gravity in one sentence.', '/perf', '/exit']), patch('cli.main.report_performance') as perf, redirect_stdout(io.StringIO()):
             run_shell(agent)
-        perf.assert_called_once_with(agent, 'Explain gravity in one sentence.')
+        first, second = perf.call_args_list
+        self.assertEqual(first.args[:2], (agent, 'Explain gravity in one sentence.'))
+        self.assertEqual(second.args[:2], (agent, None))
+        self.assertIs(first.args[2], second.args[2])
 
     def test_perf_prompt_from_flag(self):
         with patch.dict('os.environ', {}, clear=True), patch('cli.main.OllamaAgent') as model, patch('cli.main.report_performance') as perf:

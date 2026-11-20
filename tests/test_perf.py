@@ -5,10 +5,29 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from cli.agent import OllamaAgent, AgentError
-from cli.perf import format_performance, report_performance
+from cli.perf import PerformanceBaseline, format_performance, report_performance
 
 
 class PerformanceTests(unittest.TestCase):
+    def test_baseline_flags_sustained_generation_slowdown_once(self):
+        baseline = PerformanceBaseline()
+        agent = OllamaAgent('small')
+        normal = {'load_duration': 10, 'prompt_eval_count': 40, 'prompt_eval_duration': 100_000_000,
+                  'eval_count': 40, 'eval_duration': 1_000_000_000}
+        slow = {**normal, 'eval_duration': 2_000_000_000}
+        for _ in range(5):
+            self.assertEqual(baseline.observe(agent, normal), [])
+        for _ in range(3):
+            self.assertEqual(baseline.observe(agent, {**slow, 'load_duration': 2_000_000_000}), [])
+            self.assertEqual(baseline.observe(agent, {**slow, 'prompt_eval_count': 100}), [])
+        self.assertEqual(baseline.observe(agent, slow), [])
+        self.assertEqual(baseline.observe(agent, normal), [])
+        for _ in range(2):
+            self.assertEqual(baseline.observe(agent, slow), [])
+        alert, = baseline.observe(agent, slow)
+        self.assertIn('Generation slowdown: 20.00 tokens/s vs 40.00 baseline', alert)
+        self.assertEqual(baseline.observe(agent, slow), [])
+
     def test_rates_are_tokens_per_duration(self):
         text = format_performance({'model': 'small', 'total_duration': 3000000000,
                                   'eval_count': 40, 'eval_duration': 2000000000,

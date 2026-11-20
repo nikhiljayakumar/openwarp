@@ -9,7 +9,7 @@ import subprocess
 from cli import CLI_VERSION
 from cli.agent import Agent, AgentError, HttpAgent, OllamaAgent
 from cli.gpu import report_gpu
-from cli.perf import report_performance
+from cli.perf import PerformanceBaseline, report_performance
 from cli.advisor import report_advice
 
 HELP = """  OPENWARP · Help
@@ -41,6 +41,7 @@ def run_ollama(args: list[str], base_url: str) -> bool:
 
 def run_shell(agent: Agent | None, ollama_url: str | None = None) -> None:
     base_url = ollama_url or os.environ.get('OPENWARP_OLLAMA_URL', 'http://localhost:11434')
+    baseline = PerformanceBaseline()
     print(f"openwarp v{CLI_VERSION} · /help for commands")
     print("/read sends readings to the connected model." if agent is not None
           else "No model selected. /ollama selects Qwen; /models lists installed models.")
@@ -77,7 +78,7 @@ def run_shell(agent: Agent | None, ollama_url: str | None = None) -> None:
                 print(f"Model: {model}. Ready for /perf, /read, or chat.")
             elif command == "/perf":
                 if isinstance(agent, OllamaAgent):
-                    report_performance(agent, argument or None)
+                    report_performance(agent, argument or None, baseline)
                 else:
                     print("Select an Ollama model first: /ollama MODEL")
             elif message == "/advise":

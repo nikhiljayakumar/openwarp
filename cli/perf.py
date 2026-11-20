@@ -1,27 +1,83 @@
 """Performance reported by Ollama for a real generation request."""
 import math
+from collections import deque
+from dataclasses import dataclass, field
+from statistics import median
 
 from cli.agent import OllamaAgent
 
 
-def format_performance(result: dict) -> str:
-    def number(key):
-        value = result.get(key)
-        return value if type(value) in (float, int) and math.isfinite(value) and value >= 0 else None
+def _number(result: dict, key: str) -> int | float | None:
+    value = result.get(key)
+    return value if type(value) in (float, int) and math.isfinite(value) and value >= 0 else None
 
+
+def _rate(result: dict, phase: str) -> float | None:
+    count = _number(result, f'{phase}_count')
+    duration = _number(result, f'{phase}_duration')
+    return count / duration * 1e9 if count is not None and duration else None
+
+
+BASELINE_MIN_SAMPLES = 5
+BASELINE_WINDOW = 12
+SLOW_RATE_FRACTION = 0.75
+SLOW_RUNS_TO_ALERT = 3
+MAX_WARM_LOAD_NS = 1_000_000_000
+
+
+@dataclass
+class _RateHistory:
+    rates: deque[float] = field(default_factory=lambda: deque(maxlen=BASELINE_WINDOW))
+    consecutive_slow: int = 0
+
+
+class PerformanceBaseline:
+    """Track comparable Ollama requests within one interactive session."""
+
+    def __init__(self) -> None:
+        self._histories: dict[tuple[str, str, int, str, int], _RateHistory] = {}
+
+    def observe(self, agent: OllamaAgent, result: dict) -> list[str]:
+        load = _number(result, 'load_duration')
+        prompt_count = _number(result, 'prompt_eval_count')
+        if load is None or load >= MAX_WARM_LOAD_NS or not prompt_count:
+            return []
+
+        # Group request sizes by powers of two, such as 32–63 and 64–127 tokens.
+        prompt_bucket = int(prompt_count).bit_length()
+        alerts = []
+        for phase, label in (('prompt_eval', 'Prompt processing'), ('eval', 'Generation')):
+            count = _number(result, f'{phase}_count')
+            rate = _rate(result, phase)
+            if not count or not rate:
+                continue
+            key = (agent.endpoint, agent.model, prompt_bucket, phase, int(count).bit_length())
+            history = self._histories.setdefault(key, _RateHistory())
+            reference = median(history.rates) if len(history.rates) >= BASELINE_MIN_SAMPLES else None
+            if reference is not None and rate <= reference * SLOW_RATE_FRACTION:
+                history.consecutive_slow += 1
+                if history.consecutive_slow == SLOW_RUNS_TO_ALERT:
+                    alerts.append(f'{label} slowdown: {rate:.2f} tokens/s vs '
+                                  f'{reference:.2f} baseline for comparable requests '
+                                  f'({SLOW_RUNS_TO_ALERT} slow samples in a row).')
+                continue
+            history.consecutive_slow = 0
+            history.rates.append(rate)
+        return alerts
+
+
+def format_performance(result: dict) -> str:
     def seconds(key):
-        value = number(key)
+        value = _number(result, key)
         return f'{value / 1e9:.3f} s' if value is not None else 'N/A'
 
     def count(key):
-        value = number(key)
+        value = _number(result, key)
         return str(value) if value is not None else 'N/A'
 
-    def rate(count_key, duration_key):
-        tokens, duration = number(count_key), number(duration_key)
-        if tokens is None or duration is None or duration == 0:
-            return 'N/A'
-        return f'{tokens / duration * 1e9:.2f} tokens/s'
+    def rate(phase):
+        value = _rate(result, phase)
+        return f'{value:.2f} tokens/s' if value is not None else 'N/A'
 
     return '\n'.join([
         'Ollama performance · measured generation',
@@ -30,10 +86,10 @@ def format_performance(result: dict) -> str:
         f"  Load time       {seconds('load_duration')}",
         f"  Prompt tokens   {count('prompt_eval_count')}",
         f"  Prompt time     {seconds('prompt_eval_duration')}",
-        f"  Prompt rate     {rate('prompt_eval_count', 'prompt_eval_duration')}",
+        f"  Prompt rate     {rate('prompt_eval')}",
         f"  Output tokens   {count('eval_count')}",
         f"  Generate time   {seconds('eval_duration')}",
-        f"  Generate rate   {rate('eval_count', 'eval_duration')}",
+        f"  Generate rate   {rate('eval')}",
         '',
         'Source: Ollama API · one request; CPU/GPU placement: ollama ps',
     ])
@@ -42,7 +98,8 @@ def format_performance(result: dict) -> str:
 DEFAULT_PROMPT = 'Explain in a short paragraph how a computer processes a user request.'
 
 
-def report_performance(agent: OllamaAgent, prompt: str | None = None) -> None:
+def report_performance(agent: OllamaAgent, prompt: str | None = None,
+                       baseline: PerformanceBaseline | None = None) -> None:
     print(f'Running a short generation with {agent.model}...', flush=True)
     result = agent.generate(
         prompt if prompt is not None else DEFAULT_PROMPT,
@@ -52,3 +109,6 @@ def report_performance(agent: OllamaAgent, prompt: str | None = None) -> None:
     print(result['response'])
     print()
     print(format_performance(result))
+    if baseline is not None:
+        for alert in baseline.observe(agent, result):
+            print(f'  {alert}')
