@@ -18,6 +18,7 @@ from cli.advisor.render import render_json, render_text
 from cli.advisor.rule import Rule
 from cli.advisor.rules import DEFAULT_RULES
 from cli.advisor.rules.cpu_offload import CpuOffloadRule
+from cli.advisor.rules.weight_precision import WeightPrecisionRule
 from cli.advisor.snapshot import GpuReading, LoadedModel, Snapshot
 from cli.main import cli, run_shell
 
@@ -26,6 +27,7 @@ MIB = 1024 * 1024
 
 # Real measurement: qwen2.5:14b, ollama ps showed 7%/93% CPU/GPU, 32768 context.
 QWEN_14B = LoadedModel('qwen2.5:14b', 15_700_000_000, 14_600_000_000, 32768)
+Q8_7B = LoadedModel('qwen2.5:7b-instruct-q8_0', 8_100_000_000, 8_100_000_000, 4096, 'Q8_0')
 FIXTURES = Path(__file__).parent / 'fixtures'
 
 
@@ -110,6 +112,60 @@ class CpuOffloadRuleTests(unittest.TestCase):
         self.assertEqual(evidence(finding)['Other VRAM'], ('unknown', 'GPU snapshot unavailable'))
 
 
+class WeightPrecisionRuleTests(unittest.TestCase):
+    def precision(self, *models):
+        return WeightPrecisionRule().evaluate(Snapshot(models))
+
+    def test_q8_on_gpu_suggests_q4_and_q5_builds(self):
+        [f] = self.precision(Q8_7B)
+        self.assertEqual((f.rule_id, f.subject, f.confidence.level), ('weight-precision', Q8_7B.name, 'medium'))
+        self.assertEqual(evidence(f)['Weights'], ('Q8_0', '8.5 bits per weight'))
+        self.assertEqual(evidence(f)['Placement'], ('100% GPU', None))
+        self.assertIn('1.7x', f.cause)
+        self.assertEqual([fix.label for fix in f.fixes], ['Switch to Q4_K_M', 'Switch to Q5_K_M'])
+        self.assertEqual(all_commands(f), ['ollama pull qwen2.5:7b-instruct-q4_K_M',
+                                           'ollama pull qwen2.5:7b-instruct-q5_K_M'])
+        self.assertEqual(f.citation.arxiv, '2212.09720')
+        self.assertIn('not every model', f.fixes[1].note)
+        self.assertIn('almost always', f.explanation)
+
+    def test_f16_reports_bigger_ratio(self):
+        [f] = self.precision(LoadedModel('llama3.1:8b-instruct-fp16', 16 * GB, 16 * GB, None, 'F16'))
+        self.assertIn('3.3x', f.cause)
+        self.assertEqual(all_commands(f), ['ollama pull llama3.1:8b-instruct-q4_K_M',
+                                           'ollama pull llama3.1:8b-instruct-q5_K_M'])
+
+    def test_only_known_high_levels_trigger(self):
+        for level, count in (('Q4_K_M', 0), ('MXFP4', 0), ('', 0), (None, 0), ('q8_0', 1)):
+            with self.subTest(level=level):
+                self.assertEqual(len(self.precision(LoadedModel('m:x-q8_0', 4 * GB, 4 * GB, None, level))), count)
+
+    def test_offloaded_model_left_to_cpu_offload(self):
+        self.assertEqual(self.precision(LoadedModel('m:x-q8_0', 10 * GB, 8 * GB, None, 'Q8_0')), [])
+
+    def test_name_without_suffix_falls_back_to_show(self):
+        for name in ('qwen2.5:7b', 'hf.co/x/y:Q8_0'):
+            with self.subTest(name=name):
+                [f] = self.precision(LoadedModel(name, 4 * GB, 4 * GB, None, 'Q8_0'))
+                self.assertEqual(all_commands(f), [f'ollama show {name}'])
+                self.assertIn('q5_K_M tag from its model page', f.fixes[0].note)
+
+    def test_small_models_like_embeddings_are_skipped(self):
+        self.assertEqual(self.precision(LoadedModel('nomic-embed-text:latest', 274_000_000, 274_000_000, None, 'F16')), [])
+
+    def test_measured_number_appears_once(self):
+        [f] = self.precision(Q8_7B)
+        texts = [f.summary, f.cause, f.explanation, f.confidence.basis,
+                 *(x for e in f.evidence for x in (e.value, e.note or '')),
+                 *(x for fix in f.fixes for x in (fix.label, fix.note or '', *fix.commands))]
+        self.assertEqual(sum(t.count('8.5') for t in texts), 1)
+
+    def test_matches_golden_fixture(self):
+        report = RuleEngine([WeightPrecisionRule()]).run(Snapshot((Q8_7B,)))
+        expected = (FIXTURES / 'advise_weight_precision.txt').read_text(encoding='utf-8')
+        self.assertEqual(render_text(report, width=80, color=False) + '\n', expected)
+
+
 class FakeRule(Rule):
     citation = Citation('a', 't', 'v', 2000)
 
@@ -156,12 +212,14 @@ class EngineTests(unittest.TestCase):
     def test_cpu_offload_skipped_without_loaded_models(self):
         report = RuleEngine(DEFAULT_RULES).run(snap())
         self.assertEqual(report.findings, ())
-        self.assertEqual(report.skipped[0][0], 'cpu-offload')
+        self.assertEqual([r for r, _ in report.skipped], ['cpu-offload', 'weight-precision'])
         self.assertIn('Run /perf or chat first', render_text(report))
+        self.assertEqual(render_text(report).count('No models loaded'), 1)
 
     def test_all_models_on_gpu_prints_passed_message(self):
         report = RuleEngine(DEFAULT_RULES).run(snap(LoadedModel('s', GB, GB), other_mib=0))
-        self.assertEqual(render_text(report), 'No offload detected: all loaded models are 100% on GPU.')
+        self.assertEqual(render_text(report), 'No offload detected: all loaded models are 100% on GPU.\n'
+                                              'Weights OK: no model fully on the GPU uses 8- or 16-bit weights.')
 
 
 SCENARIOS = {
@@ -169,6 +227,7 @@ SCENARIOS = {
     'multiple_models': snap(QWEN_14B, LoadedModel('qwen2.5:0.5b', GB, GB, 4096), other_mib=5000),
     'other_apps': snap(LoadedModel('big', 10 * GB, 8 * GB, 4096), other_mib=3500),
     'weights': snap(LoadedModel('big', 10 * GB, 8 * GB), other_mib=None),
+    'weight_precision': Snapshot((Q8_7B,)),
 }
 
 
@@ -248,6 +307,14 @@ class CollectTests(unittest.TestCase):
         with patch('cli.advisor.collect.urlopen', return_value=ps_response([])), \
              patch('cli.gpu.subprocess.run', return_value=subprocess.CompletedProcess([], 0, smi)):
             self.assertIsNone(collect('http://localhost:11434').gpus[0].memory_used_mib)
+
+    def test_reads_quantization_level(self):
+        raw = {**RAW_QWEN, 'details': {'quantization_level': 'Q8_0'}}
+        bad = {'name': 'x', 'size': 5, 'size_vram': 5, 'details': 'oops'}
+        with patch('cli.advisor.collect.urlopen', return_value=ps_response([raw, bad])), \
+             patch('cli.gpu.subprocess.run', side_effect=FileNotFoundError()):
+            models = collect('http://localhost:11434').models
+        self.assertEqual([m.quantization for m in models], ['Q8_0', None])
 
     def test_ollama_failures_raise_agent_error(self):
         for error in (URLError('refused'), HTTPError('u', 500, 'err', {}, io.BytesIO()), TimeoutError(), OSError()):

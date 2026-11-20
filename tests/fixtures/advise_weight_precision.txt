@@ -1,0 +1,26 @@
+OpenWarp advice · 1 finding
+
+Weight precision · qwen2.5:7b-instruct-q8_0                   confidence: medium
+  Each token reads more weight bytes than a 4-bit build would.
+
+  Evidence
+    Weights     Q8_0       8.5 bits per weight
+    Placement   100% GPU
+  Likely cause  Weights read per token: about 1.7x a Q4_K_M build
+
+  Fix (pick one)
+    1. Switch to Q4_K_M   ollama pull qwen2.5:7b-instruct-q4_K_M
+                          (fastest; then select it with /ollama)
+    2. Switch to Q5_K_M   ollama pull qwen2.5:7b-instruct-q5_K_M
+                          (more accurate, slower; not every model has it)
+
+  Why
+    Generating each token reads the weights it uses from memory, so with one
+    request at a time the speed is set by memory bandwidth, not compute. Fewer
+    bits per weight means fewer bytes per token. 4-bit costs a little accuracy,
+    but across model families it almost always gives the best accuracy for a
+    given memory size; 5-bit is in between on both speed and accuracy.
+
+  Source  Dettmers & Zettlemoyer, "The case for 4-bit precision: k-bit Inference Scaling Laws," ICML 2023, arXiv:2212.09720
+
+Advice only. OpenWarp did not change any settings.

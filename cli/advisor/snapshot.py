@@ -12,6 +12,7 @@ class LoadedModel:
     size: int
     size_vram: int
     context_length: int | None = None
+    quantization: str | None = None  # /api/ps details.quantization_level, e.g. 'Q4_K_M'
 
 
 @dataclass(frozen=True)
@@ -44,8 +45,11 @@ def parse_models(payload) -> tuple[LoadedModel, ...]:
         if not isinstance(item, dict) or type(item.get('size')) is not int or type(item.get('size_vram')) is not int:
             raise AgentError('Ollama /api/ps returned a model without integer size and size_vram.')
         context = item.get('context_length')
+        details = item.get('details')
+        quant = details.get('quantization_level') if isinstance(details, dict) else None
         models.append(LoadedModel(str(item.get('name', 'unknown')), item['size'], item['size_vram'],
-                                  context if type(context) is int else None))
+                                  context if type(context) is int else None,
+                                  quant if isinstance(quant, str) else None))
     return tuple(models)
 
 

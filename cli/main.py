@@ -16,7 +16,7 @@ HELP = """  OPENWARP · Help
   ────────────────────────────────────────────────────────────
   /read           Show GPU stats; a connected model explains them.
   /perf [PROMPT]  Run your prompt (or a default); show reply + timings.
-  /advise         Check loaded models for CPU offload (run /perf or chat first).
+  /advise         Check for CPU offload and 8/16-bit weights (run /perf first).
   /ollama MODEL   Select an installed model (default: qwen2.5:0.5b).
   /models         List models downloaded in Ollama.
   /pull MODEL     Download a model, then select it for this session.
@@ -106,7 +106,7 @@ def cli(argv: list[str] | None = None) -> None:
     parser.add_argument("--ollama-url", default=os.environ.get("OPENWARP_OLLAMA_URL", "http://localhost:11434"), help="Ollama base URL")
     parser.add_argument("--read", "--gpu", dest="gpu", action="store_true", help="read a GPU snapshot and exit (NVIDIA)")
     parser.add_argument("--perf", action="store_true", help="run a short generation and show Ollama timing metrics")
-    parser.add_argument("--advise", action="store_true", help="check loaded Ollama models for CPU offload and exit")
+    parser.add_argument("--advise", action="store_true", help="check loaded Ollama models for CPU offload and 8/16-bit weights, then exit")
     parser.add_argument("--json", action="store_true", help="with --advise, print the report as JSON")
     parser.add_argument("--explain", action="store_true", help="send the GPU snapshot to the connected model; requires --read")
     parser.add_argument("message", nargs="?", help="send one quoted message and exit")

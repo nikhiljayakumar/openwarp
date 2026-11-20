@@ -41,7 +41,7 @@ def _finding(f: Finding, width: int, color: bool) -> list[str]:
     if len(head) + 2 + len(conf) <= width:
         lines = [_paint(head, BOLD, color) + ' ' * (width - len(head) - len(conf)) + painted]
     else:
-        lines = [_paint(head, BOLD, color), '  ' + painted]
+        lines = [*(_paint(line, BOLD, color) for line in _wrap(head, width, '')), '  ' + painted]
     lines += _wrap(f.summary, width, '  ')
 
     # Evidence rows and the cause share one value column.
@@ -79,7 +79,8 @@ def _finding(f: Finding, width: int, color: bool) -> list[str]:
 
 def render_text(report: Report, width: int | None = None, color: bool | None = None) -> str:
     if not report.findings:
-        return '\n'.join(message for _, message in report.skipped + report.passed)
+        # Rules often skip for the same reason (no models loaded): print each message once.
+        return '\n'.join(dict.fromkeys(message for _, message in report.skipped + report.passed))
     if width is None:
         width = max(MIN_WIDTH, min(shutil.get_terminal_size().columns, MAX_WIDTH))
     if color is None:
