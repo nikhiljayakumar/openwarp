@@ -14,8 +14,8 @@ is `http://localhost:11434`.
 - **Installation:** internet access and sudo. Local inference works offline after downloading a model.
 
 For GPU compatibility, see [Ollama hardware support](https://docs.ollama.com/gpu).
-Check `nvidia-smi` for sensor access and `ollama ps` during inference for CPU/GPU
-placement. GPU detection during installation alone does not confirm GPU inference.
+GPU detection at install time does not confirm GPU inference; check `ollama ps`
+while a model is running.
 
 ## Setup
 
@@ -44,8 +44,7 @@ openwarp --version
 
 Add the `export PATH=...` line to `~/.bashrc` if absent. If the link already
 exists, check it with `ls -l ~/.local/bin/openwarp`. Keep the checkout in place;
-the launcher uses its files. Alternatively, run `python3 -m cli` from the checkout.
-No pip or virtual environment is required.
+the launcher runs from it. Alternatively, run `python3 -m cli` from the checkout.
 
 ### 3. Install Ollama and a starter model
 
@@ -89,9 +88,10 @@ Inside OpenWarp:
 | `/ollama [MODEL]` | Select a model for this session; defaults to `qwen2.5:0.5b`. Does not download it. |
 | `/models` | List installed models. |
 | `/pull [MODEL]` | Download and select a model; same default as `/ollama`. |
-| `/perf [PROMPT]` | Generate a reply and display its inference measurements; uses a built-in prompt if omitted. |
+| `/perf [PROMPT]` | Generate a reply and show its timings; uses a built-in prompt if omitted. |
 | `/read` | Capture GPU readings; a connected model also explains them. |
-| Ordinary text | Chat without collecting GPU readings or displaying performance. |
+| `/advise` | Check loaded models for partial CPU offload and suggest a fix. |
+| Ordinary text | Chat with the model. |
 | `/help` | Show commands. |
 | `/exit`, `/quit` | Exit. Ctrl-D or Ctrl-C also exits at the prompt. |
 
@@ -99,34 +99,36 @@ Inside OpenWarp:
 
 ## What gets measured?
 
-**`/perf` runs your prompt through Ollama.** After generation finishes, it prints
-the reply, load/total time, prompt/output token counts, processing times, and
-tokens/second from the [Ollama API](https://docs.ollama.com/api/generate).
-Rates use tokens divided by the corresponding duration. These are measurements
-of that request, not model-generated estimates or previous chat statistics.
+**`/perf` runs one request through Ollama** and prints the reply, load/total
+time, token counts, durations, and tokens/second as reported by the
+[Ollama API](https://docs.ollama.com/api/generate). Output is capped at
+**128 tokens**, so answers may be cut short. The request times out after 120
+seconds; cold starts can take longer. Missing metrics show `N/A`.
 
-Generation is capped at **128 output tokens**, so answers may be cut short.
-`/perf` alone asks how a computer processes a user request. No further input is
-needed while it runs; output appears on completion, with a 120-second response
-timeout. Cold starts can take longer. Missing metrics show `N/A`.
+**`/read` takes one `nvidia-smi` snapshot** of utilization, VRAM, temperature,
+and power, then optionally asks the model to explain it. The snapshot covers the
+whole machine, including other workloads, and is taken before the explanation
+runs. Unavailable sensors show `N/A`. Explanations can be wrong and are labelled
+separately from the readings.
 
-**`/read` takes one NVIDIA snapshot when invoked.** It reads utilization, VRAM,
-temperature, and power through `nvidia-smi`, then optionally asks the model to
-explain them. It captures the local machine before that explanation runs, may
-include other workloads, and does not measure the explanation's inference.
-There is no background polling. Unavailable sensors show `N/A`; explanations
-can be wrong and are labelled separately from measurements.
+**`/advise` applies a fixed rule, not a model.** It reads `/api/ps` and one
+`nvidia-smi` snapshot (if available), flags any loaded model with weights on the
+CPU, and prints evidence, a likely cause, fixes, and a source. Confidence is
+high for a measured cause, medium for an inferred one, low for the fallback. It
+never changes settings. Ollama unloads idle models after a few minutes, so run
+it soon after `/perf` or chat.
 
 ## Configuration and scripting
 
 Select a model at launch with `--ollama-model MODEL` or `OPENWARP_OLLAMA_MODEL`.
 Set the server with `--ollama-url URL` or `OPENWARP_OLLAMA_URL`; this also applies
-to `/models` and `/pull`. With a remote server, `/perf` measures remote inference
-while `/read` still measures the local GPU. Requests are independent; OpenWarp
-does not retain chat history.
+to `/models` and `/pull`. With a remote server, `/read` still reads the local GPU.
+OpenWarp keeps no chat history; each message is sent on its own.
 
 ```bash
 openwarp --read
+openwarp --advise
+openwarp --advise --json
 openwarp --ollama-model qwen2.5:0.5b --perf "Explain how a GPU works."
 openwarp --ollama-model qwen2.5:0.5b "Hello"
 ```
@@ -134,8 +136,7 @@ openwarp --ollama-model qwen2.5:0.5b "Hello"
 A custom agent can use `--agent-url URL` or `OPENWARP_AGENT_URL`, with optional
 `OPENWARP_AGENT_TOKEN` bearer authentication. Its endpoint must accept POST JSON
 `{"message":"Hello"}` and return `{"reply":"Hi"}` (30-second timeout).
-`/perf` requires Ollama. Packaged installation is available with
-`python3 -m pip install -e .` in an environment with pip.
+`/perf` requires Ollama. To install as a package instead: `python3 -m pip install -e .`
 
 ## Troubleshooting
 
@@ -144,7 +145,7 @@ A custom agent can use `--agent-url URL` or `OPENWARP_AGENT_URL`, with optional
 - **Connection refused:** check `/api/tags` using the setup command; start Ollama if needed.
 - **Missing model:** `/models` to inspect, `/pull MODEL` to download.
 - **GPU read fails:** run `nvidia-smi` in the same Ubuntu/WSL terminal and resolve driver access. AMD/Apple sensor readings are not implemented.
-- **Inference stalls:** check the commands below in another terminal. If direct inference also stalls, investigate Ollama before OpenWarp.
+- **Inference stalls:** run these in another terminal. If `ollama run` also stalls, the problem is in Ollama.
 
 ```bash
 ollama ps

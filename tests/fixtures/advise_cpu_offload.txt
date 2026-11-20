@@ -1,0 +1,28 @@
+OpenWarp advice · 1 finding
+
+CPU offload · qwen2.5:14b                                       confidence: high
+  Part of the model is running on the CPU, slowing every token.
+
+  Evidence
+    Placement      7%/93% CPU/GPU   1.1 GB of 15.7 GB on CPU
+    Context        32,768 tokens    above the 8,192 threshold
+    Loaded models  1
+    Other VRAM     2,315 MiB
+  Likely cause     KV cache for the long context
+
+  Fix (pick one)
+    1. Shorter context     /set parameter num_ctx 8192   (inside ollama run)
+    2. Quantize KV cache   sudo systemctl edit ollama
+                           add under [Service]:
+                             Environment="OLLAMA_FLASH_ATTENTION=1"
+                             Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
+                           sudo systemctl restart ollama
+
+  Why
+    A partial CPU offload is slow: every token must pass through the layers left
+    in system RAM, which the CPU computes with far less memory bandwidth than
+    the GPU, and activations cross PCIe between CPU and GPU layers.
+
+  Source  Song et al., "PowerInfer: Fast LLM Serving with a Consumer-grade GPU," SOSP 2024, arXiv:2312.12456
+
+Advice only. OpenWarp did not change any settings.

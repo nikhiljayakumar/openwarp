@@ -34,7 +34,7 @@ class HttpAgent:
                 payload = json.load(response)
         except HTTPError as exc:
             raise AgentError(f"Agent returned HTTP {exc.code}.") from exc
-        except (URLError, OSError, ValueError) as exc:
+        except (OSError, ValueError) as exc:
             raise AgentError("Could not read a JSON response from the agent.") from exc
         if not isinstance(payload, dict) or not isinstance(payload.get("reply"), str):
             raise AgentError('Agent response must contain a string field named "reply".')
@@ -61,7 +61,7 @@ class OllamaAgent:
         except HTTPError as exc:
             if exc.code == 404:
                 raise AgentError('Ollama HTTP 404: check the model name and server URL.') from exc
-            raise AgentError(f'Ollama returned HTTP {exc.code}. Inspect journalctl -u ollama -n 50 --no-pager for server errors.') from exc
+            raise AgentError(f'Ollama returned HTTP {exc.code}. Check journalctl -u ollama -n 50 --no-pager.') from exc
         except TimeoutError as exc:
             raise AgentError('Ollama hit the 120-second response timeout. Check ollama ps and service logs.') from exc
         except URLError as exc:
