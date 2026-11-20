@@ -114,6 +114,23 @@ consecutive comparable samples at least 25% below baseline. Those slow samples
 stay out of the baseline. The alert measures throughput; identifying a GPU
 bottleneck requires additional profiling.
 
+When a slowdown alert fires, OpenWarp checks Ollama model placement and takes one
+post-request NVIDIA GPU snapshot for local servers. For fully GPU-resident
+models on local Ollama, it automatically starts a deeper capture and saves it
+under `./profiles`. Use `--profile-on-slowdown DIR` to change that location.
+Capture requires `nsys` on the Ollama GPU host and `ncu` for kernel counters.
+If the Ollama service uses a separate model directory, set
+`OLLAMA_MODELS` to the location of the installed model files and ensure your
+user can access them.
+
+For GPU-resident models, a fresh loopback Ollama server reruns the triggering
+prompt under Nsight Systems and saves the CUDA timeline and kernel summary.
+Nsight Compute then captures up to three launches of the kernel with the most
+cumulative GPU time and saves memory, compute, occupancy, and scheduler analysis.
+These captures include fresh model startup and may contend with the original
+server for VRAM. A comparable healthy capture is needed to attribute a
+regression to a particular kernel.
+
 **`/read` takes one `nvidia-smi` snapshot** of utilization, VRAM, temperature,
 and power, then optionally asks the model to explain it. The snapshot covers the
 whole machine, including other workloads, and is taken before the explanation

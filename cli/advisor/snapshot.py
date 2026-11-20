@@ -20,6 +20,7 @@ class GpuReading:
     name: str
     memory_used_mib: int | None
     memory_total_mib: int | None
+    utilization_percent: int | None = None
 
 
 @dataclass(frozen=True)
@@ -31,7 +32,7 @@ class Snapshot:
 def _int_or_none(value) -> int | None:
     try:
         return int(float(value))
-    except ValueError:
+    except (TypeError, ValueError, OverflowError):
         return None  # e.g. nvidia-smi's 'N/A' or '[Not Supported]'
 
 
@@ -52,5 +53,6 @@ def parse_models(payload) -> tuple[LoadedModel, ...]:
 def parse_gpus(metrics: dict) -> tuple[GpuReading, ...]:
     """Parse a cli.gpu.snapshot() result."""
     return tuple(GpuReading(_int_or_none(g['index']), g['name'],
-                            _int_or_none(g['memory_used_mib']), _int_or_none(g['memory_total_mib']))
+                            _int_or_none(g['memory_used_mib']), _int_or_none(g['memory_total_mib']),
+                            _int_or_none(g.get('utilization_percent')))
                  for g in metrics['gpus'])

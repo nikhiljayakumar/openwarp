@@ -5,11 +5,14 @@ import argparse
 import os
 import sys
 import subprocess
+from functools import partial
+from pathlib import Path
 
 from cli import CLI_VERSION
 from cli.agent import Agent, AgentError, HttpAgent, OllamaAgent
 from cli.gpu import report_gpu
 from cli.perf import PerformanceBaseline, report_performance
+from cli.profiling import DEFAULT_PROFILE_OUTPUT, investigate_slowdown
 from cli.advisor import report_advice
 
 HELP = """  OPENWARP · Help
@@ -39,9 +42,11 @@ def run_ollama(args: list[str], base_url: str) -> bool:
         raise AgentError('Ollama command unavailable. Install Ollama first.') from exc
 
 
-def run_shell(agent: Agent | None, ollama_url: str | None = None) -> None:
+def run_shell(agent: Agent | None, ollama_url: str | None = None,
+              profile_output: Path = DEFAULT_PROFILE_OUTPUT) -> None:
     base_url = ollama_url or os.environ.get('OPENWARP_OLLAMA_URL', 'http://localhost:11434')
     baseline = PerformanceBaseline()
+    on_slowdown = partial(investigate_slowdown, output=profile_output)
     print(f"openwarp v{CLI_VERSION} · /help for commands")
     print("/read sends readings to the connected model." if agent is not None
           else "No model selected. /ollama selects Qwen; /models lists installed models.")
@@ -78,7 +83,7 @@ def run_shell(agent: Agent | None, ollama_url: str | None = None) -> None:
                 print(f"Model: {model}. Ready for /perf, /read, or chat.")
             elif command == "/perf":
                 if isinstance(agent, OllamaAgent):
-                    report_performance(agent, argument or None, baseline)
+                    report_performance(agent, argument or None, baseline, on_slowdown=on_slowdown)
                 else:
                     print("Select an Ollama model first: /ollama MODEL")
             elif message == "/advise":
@@ -106,11 +111,16 @@ def cli(argv: list[str] | None = None) -> None:
     parser.add_argument("--ollama-url", default=os.environ.get("OPENWARP_OLLAMA_URL", "http://localhost:11434"), help="Ollama base URL")
     parser.add_argument("--read", "--gpu", dest="gpu", action="store_true", help="read a GPU snapshot and exit (NVIDIA)")
     parser.add_argument("--perf", action="store_true", help="run a short generation and show Ollama timing metrics")
+    parser.add_argument("--profile-on-slowdown", type=Path, metavar="DIR",
+                        help="set the output directory for automatic Nsight captures (default: ./profiles)")
     parser.add_argument("--advise", action="store_true", help="check loaded Ollama models for CPU offload and exit")
     parser.add_argument("--json", action="store_true", help="with --advise, print the report as JSON")
     parser.add_argument("--explain", action="store_true", help="send the GPU snapshot to the connected model; requires --read")
     parser.add_argument("message", nargs="?", help="send one quoted message and exit")
     args = parser.parse_args(argv)
+    if args.profile_on_slowdown is not None and (args.advise or args.gpu or args.perf
+                                                or args.explain or args.message is not None):
+        parser.error("--profile-on-slowdown requires the interactive shell")
     if args.advise and (args.gpu or args.perf or args.explain or args.message is not None):
         parser.error("--advise cannot be combined with --read, --perf, --explain, or a message")
     if args.json and not args.advise:
@@ -140,7 +150,7 @@ def cli(argv: list[str] | None = None) -> None:
                 parser.error("a message requires --ollama-model, --agent-url, or OPENWARP_AGENT_URL")
             print(agent.reply(args.message))
         else:
-            run_shell(agent, args.ollama_url)
+            run_shell(agent, args.ollama_url, args.profile_on_slowdown or DEFAULT_PROFILE_OUTPUT)
     except AgentError as exc:
         parser.exit(1, f"Error: {exc}\n")
     except KeyboardInterrupt:

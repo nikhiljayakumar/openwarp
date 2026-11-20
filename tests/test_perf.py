@@ -25,7 +25,7 @@ class PerformanceTests(unittest.TestCase):
         for _ in range(2):
             self.assertEqual(baseline.observe(agent, slow), [])
         alert, = baseline.observe(agent, slow)
-        self.assertIn('Generation slowdown: 20.00 tokens/s vs 40.00 baseline', alert)
+        self.assertIn('Generation slowdown: 20.00 tokens/s vs 40.00 baseline', str(alert))
         self.assertEqual(baseline.observe(agent, slow), [])
 
     def test_rates_are_tokens_per_duration(self):

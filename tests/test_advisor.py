@@ -236,7 +236,7 @@ class CollectTests(unittest.TestCase):
             s = collect('http://localhost:11434/')
         self.assertEqual(send.call_args.args[0], 'http://localhost:11434/api/ps')
         self.assertEqual(s.models, (QWEN_14B, LoadedModel('old', 5, 5, None)))
-        self.assertEqual(s.gpus, (GpuReading(0, 'NVIDIA RTX', round(QWEN_14B.size_vram / MIB) + 400, 16376),))
+        self.assertEqual(s.gpus, (GpuReading(0, 'NVIDIA RTX', round(QWEN_14B.size_vram / MIB) + 400, 16376, 90),))
 
     def test_missing_nvidia_smi_gives_no_gpus(self):
         with patch('cli.advisor.collect.urlopen', return_value=ps_response([RAW_QWEN])), \

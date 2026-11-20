@@ -33,8 +33,10 @@ def ollama_placement(base_url: str) -> tuple[LoadedModel, ...]:
     return parse_models(payload)
 
 
-def collect(base_url: str) -> Snapshot:
+def collect(base_url: str, *, include_local_gpu: bool = True) -> Snapshot:
     models = ollama_placement(base_url)
+    if not include_local_gpu:
+        return Snapshot(models)
     try:
         gpus = parse_gpus(gpu.snapshot())
     except AgentError:
