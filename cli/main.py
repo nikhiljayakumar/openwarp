@@ -8,14 +8,15 @@ import subprocess
 
 from cli import CLI_VERSION
 from cli.agent import Agent, AgentError, HttpAgent, OllamaAgent
-
 from cli.gpu import report_gpu
 from cli.perf import report_performance
+from cli.advisor import report_advice
 
 HELP = """  OPENWARP · Help
   ────────────────────────────────────────────────────────────
   /read           Show GPU stats; a connected model explains them.
   /perf [PROMPT]  Run your prompt (or a default); show reply + timings.
+  /advise         Check loaded models for CPU offload (run /perf or chat first).
   /ollama MODEL   Select an installed model (default: qwen2.5:0.5b).
   /models         List models downloaded in Ollama.
   /pull MODEL     Download a model, then select it for this session.
@@ -79,6 +80,8 @@ def run_shell(agent: Agent | None, ollama_url: str | None = None) -> None:
                     report_performance(agent, argument or None)
                 else:
                     print("Select an Ollama model first: /ollama MODEL")
+            elif message == "/advise":
+                report_advice(base_url)
             elif message in {"/read", "/read explain", "/gpu", "/gpu explain"}:
                 report_gpu(agent, explain=message.endswith(" explain") or agent is not None)
             elif message.startswith("/"):
@@ -102,9 +105,15 @@ def cli(argv: list[str] | None = None) -> None:
     parser.add_argument("--ollama-url", default=os.environ.get("OPENWARP_OLLAMA_URL", "http://localhost:11434"), help="Ollama base URL")
     parser.add_argument("--read", "--gpu", dest="gpu", action="store_true", help="read a GPU snapshot and exit (NVIDIA)")
     parser.add_argument("--perf", action="store_true", help="run a short generation and show Ollama timing metrics")
+    parser.add_argument("--advise", action="store_true", help="check loaded Ollama models for CPU offload and exit")
+    parser.add_argument("--json", action="store_true", help="with --advise, print the report as JSON")
     parser.add_argument("--explain", action="store_true", help="send the GPU snapshot to the connected model; requires --read")
     parser.add_argument("message", nargs="?", help="send one quoted message and exit")
     args = parser.parse_args(argv)
+    if args.advise and (args.gpu or args.perf or args.explain or args.message is not None):
+        parser.error("--advise cannot be combined with --read, --perf, --explain, or a message")
+    if args.json and not args.advise:
+        parser.error("--json requires --advise")
     if args.perf and (args.gpu or args.explain):
         parser.error("--perf cannot be combined with --read or --explain")
     if args.perf and not args.ollama_model:
@@ -119,11 +128,12 @@ def cli(argv: list[str] | None = None) -> None:
         agent = HttpAgent(args.agent_url, os.environ.get("OPENWARP_AGENT_TOKEN")) if args.agent_url else None
         if args.ollama_model:
             agent = OllamaAgent(args.ollama_model, args.ollama_url)
-        if args.perf:
+        if args.advise:
+            report_advice(args.ollama_url, as_json=args.json)
+        elif args.perf:
             report_performance(agent, args.message)
         elif args.gpu:
-            explain = args.explain or agent is not None
-            report_gpu(agent, explain)
+            report_gpu(agent, args.explain or agent is not None)
         elif args.message is not None:
             if agent is None:
                 parser.error("a message requires --ollama-model, --agent-url, or OPENWARP_AGENT_URL")

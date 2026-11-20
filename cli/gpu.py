@@ -1,4 +1,4 @@
-"""Read-only NVIDIA GPU snapshots; no tuning or diagnosis engine."""
+"""Read-only NVIDIA GPU snapshots from nvidia-smi."""
 from __future__ import annotations
 
 import csv
@@ -21,16 +21,16 @@ def snapshot() -> dict:
             capture_output=True, text=True, timeout=10, check=True,
         )
     except FileNotFoundError as exc:
-        raise AgentError('nvidia-smi is unavailable. GPU snapshots currently require an NVIDIA GPU and driver.') from exc
+        raise AgentError('nvidia-smi not found. GPU readings need an NVIDIA GPU and driver.') from exc
     except (subprocess.SubprocessError, OSError) as exc:
-        raise AgentError('Could not read GPU metrics from nvidia-smi. Check your NVIDIA driver and GPU access.') from exc
+        raise AgentError('nvidia-smi failed. Check the NVIDIA driver and GPU access.') from exc
     gpus = []
     for row in csv.reader(io.StringIO(result.stdout)):
         if not row:
             continue
         if len(row) != len(KEYS):
             raise AgentError('Unexpected GPU metrics format from nvidia-smi.')
-        # Keep unavailable sensor readings explicit rather than inventing numbers.
+        # Values stay strings: an unavailable sensor reads '[N/A]', not a number.
         gpus.append(dict(zip(KEYS, (value.strip() for value in row))))
     if not gpus:
         raise AgentError('nvidia-smi returned no GPUs.')
@@ -38,19 +38,16 @@ def snapshot() -> dict:
 
 
 def format_snapshot(metrics: dict) -> str:
-    """Readable GPU cards, also suitable for piped output."""
-    lines = ['GPU performance', f"Captured: {metrics.get('captured_at', 'unknown')}  |  Source: {metrics.get('source', 'unknown')}"]
+    lines = ['GPU performance', f"Captured: {metrics['captured_at']}  |  Source: {metrics['source']}"]
 
     def value(gpu: dict, key: str, unit: str) -> str:
-        reading = gpu.get(key, 'N/A')
-        if reading in {'N/A', '[N/A]', '[Not Supported]', 'Not Supported', ''}:
-            return 'N/A'
-        return f'{reading}{unit}'
+        reading = gpu[key]
+        return 'N/A' if reading in {'N/A', '[N/A]', '[Not Supported]', 'Not Supported', ''} else f'{reading}{unit}'
 
     for gpu in metrics['gpus']:
         lines.extend([
             '',
-            f"GPU {gpu.get('index', '?')} · {gpu.get('name', 'Unknown GPU')}",
+            f"GPU {gpu['index']} · {gpu['name']}",
             f"  Utilization   {value(gpu, 'utilization_percent', '%')}",
             f"  VRAM          {value(gpu, 'memory_used_mib', ' MiB')} / {value(gpu, 'memory_total_mib', ' MiB')}",
             f"  Temperature   {value(gpu, 'temperature_c', ' °C')}",
@@ -62,8 +59,7 @@ def format_snapshot(metrics: dict) -> str:
 def report_gpu(agent: Agent | None = None, explain: bool = False) -> None:
     if explain and agent is None:
         raise AgentError('GPU explanation requires --ollama-model MODEL or an agent connection.')
-    metrics = snapshot()
-    card = format_snapshot(metrics)
+    card = format_snapshot(snapshot())
     print(card, flush=True)
     if explain:
         print('\nModel explanation (not a measured diagnosis):', flush=True)
